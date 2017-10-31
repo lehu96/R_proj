@@ -1,0 +1,237 @@
+---
+title: "Project_2"
+author: "Laney Huang"
+date: "April 28, 2017"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(GGally)
+library(ggplot2)
+library(stringr)
+library(dplyr)
+library(leaps)
+options(warn=-1)
+```
+
+
+Reading Data:
+```{r}
+bike.train <- read.csv("train.csv", header=TRUE)
+bike.train$season <- factor(bike.train$season, levels=c(1,2,3,4), 
+                            labels = c("spring","summer","fall","winter"))
+bike.train$holiday <- factor(bike.train$holiday, levels=c(0,1), 
+                             labels=c("No","Yes"))
+bike.train$workingday <- factor(bike.train$workingday, levels=c(0,1), 
+                             labels=c("No","Yes"))
+bike.train$weather <- factor(bike.train$weather, levels=c(1,2,3,4),
+                             labels=c(1,2,3,3)) # 1 is most pleasant
+times <- as.numeric(str_sub(bike.train$datetime, -8, -7))
+bike.train$time <- factor(sapply(times, 
+                          function(x) {
+                            if(1<x & x<6) {return("Early Morn")}
+                            else if(5<x & x<10) {return("Morning")}
+                            else if(9<x & x<14) {return("Noon")}
+                            else if(13<x & x<18) {return("Afternoon")}
+                            else if(17<x & x<22) {return("Evening")}
+                            else if(x>21 | x<2) {return("Night")}
+                          }), levels=c("Early Morn","Morning","Noon","Afternoon", 
+                                       "Evening","Night"))
+```
+
+*I have converted the datetime variable to 6 factors, corresponding to the hour of the day of the rental. From 2:00 to 6:00 is night, from 6:00 to 10:00 is morning, from 10:00 to 14:00 is noon, from 14:00 to 18:00 is afternoon, from 18:00 to 22:00 is evening, and from 22:00 to 2:00 is night. I have also combined weather levels 3 and 4, because below, I have noted in the brief summary analysis, that category 4 has only 1 data entry, and thus may be difficult to analyze.
+
+
+```{r}
+bike.test <- read.csv("test.csv", header = TRUE)
+bike.test$season <- factor(bike.test$season, levels=c(1,2,3,4), 
+                            labels = c("spring","summer","fall","winter"))
+bike.test$holiday <- factor(bike.test$holiday, levels=c(0,1), 
+                             labels=c("No","Yes"))
+bike.test$workingday <- factor(bike.test$workingday, levels=c(0,1), 
+                             labels=c("No","Yes"))
+bike.test$weather <- factor(bike.test$weather, levels=c(1,2,3,4),
+                             labels=c(1,2,3,3)) # 1 is most pleasant
+times2 <- as.numeric(str_sub(bike.test$datetime, -8, -7))
+bike.test$time <- factor(sapply(times2, 
+                          function(x) {
+                            if(1<x & x<6) {return("Early Morn")}
+                            else if(5<x & x<10) {return("Morning")}
+                            else if(9<x & x<14) {return("Noon")}
+                            else if(13<x & x<18) {return("Afternoon")}
+                            else if(17<x & x<22) {return("Evening")}
+                            else if(x>21 | x<2) {return("Night")}
+                          }), levels=c("Early Morn","Morning","Noon","Afternoon", 
+                                       "Evening","Night"))
+```
+*Reading in the test dataset for use later in the prediction accuracy.
+
+
+
+\pagebreak
+Basic Analysis:
+```{r}
+summary(bike.train)
+```
+
+Bike rentals appear to be distributed evenly through the seasons, even during winter which is somewhat unexpected. Most of the rentals occur on nonholidays. Not surprisingly, there are also more rentals during the week, by mere number of days counted. Also as expected, days in which there were rentals are greater during conditions in which weather is pleasant, with large decreases as the weather conditions worsen. That one entry during which the weather is measured as "4", the most extreme, will likely be an outlier or cause issues with the regression analysis. Temperatures seem to be feel higher than the true temperature on average. The counts of rentals per time period is cannot be judged yet because the data is provided per hour entry, and the actual counts have not yet been taken into consideration. 
+
+
+Rather than analyze separate histograms for the numeric variables and barplots for the factor variables, it may be better to just analyze pairwise comparisons of the variables in a pairs plot. Below, I have excluded some variables, based on what I have observed in the summaries. Holiday is overwhelmingly weighted on the nonholiday dates, and it is difficult to even see how the distribution of the holiday dates, because of the relatively low counts. Temp and atemp explain similar things, and so I chose to keep atemp because it is closer to what the renter would likely feel. Finally, to simplify counts of rentals, I took only the total count, rather than separate casual and registered rentals. 
+
+Below are two pairs plots, categorized by season. As only entries that have nonzero rental counts are recorded, grouping by season may give some preliminary indication of any difference in rental habits between the seasons. 
+
+```{r,include=FALSE}
+no_fill <- function(data, mapping, ...){
+  ggplot(data = data, mapping=mapping) +
+    geom_density(mapping = aes_string(color="season"), fill=NA)
+}
+```
+
+\pagebreak
+```{r, fig.width=10, fig.height=5}
+ggpairs(data= bike.train,
+        aes(color = season),
+        columns = c(4, 5, 7, 8, 9, 12, 13),
+        lower=list(combo=wrap("facethist", binwidth=5)),
+        diag=list(continuous=no_fill))
+
+```
+(Spring = pink, Summer = green, Fall = blue, Winter = purple)
+
+In the diagonal are either the bar plots or density plots of the variables themselves, factors or numeric, respectively. The atemp variable shows the most distinct difference among the seasons, with the plot of fall rentals furthest right, followed then by summer, winter, and then spring. Humidity has a wide range, with a longer left tail. In contrast, windspeed has a narrower range, with a long right tail. For count of rentals, spring is the only season that shows a difference from the rest, heavily shifted left. Nothing new is really gleaned from the bar plots, which are almost equally divide between the seasons.
+
+Somewhat unexpectedly, spring counts are lower than all of the other seasons. This could be attributed to the fact that this plot is counting the number of entries, rather than the sum of rentals. It also appears that fall is considerably warmer than spring, which is not that expected, since both seasons are between the extreme seasons of summer and winter, and would make more sense to have similar weather conditions. As for the overlaid plots, there is a lot of noise that makes it hard to make any informed observations, but for some, it is apparent that spring and fall have the greatest difference in values, whereas summer and winter have great overlap. For weather related histograms of atemp, humidity, and windspeed, it appers that winter has the widest distributions, whereas spring has the most narrow ones. 
+
+
+\pagebreak
+
+Regression Choice:
+
+It seems like it would make more sense to just perform regression on the total count. From prelimary exploration of the variables casual and registered, they appear to have relatively similar distributions, so accuracy of the regression may be retained with the count variable as a summary of both. As counts is a numeric variable, rather than a factor, it does not make sense to perform logistic regression. Multiple regression is the better choice here. Furthermore, based on preliminary analysis, it is necessary to work with the log(count), or else the regression model gives negative values.
+
+
+Regression Analysis:
+
+First, the response variable will be plotted against each of the explanatory variables in order to identify general trends and potential outliers. As temp and atemp have a high correlation, I chose to only keep atemp in any further analysis, to simplify modeling. A very basic regression line is overlaid on each plot for each individual variable.
+```{r, fig.width=10, fig.height=8}
+bike.trim <- bike.train[,c(12, 2:5, 7:9, 13)]
+cols <- colnames(bike.trim)
+par(mfrow = c(3, 3))
+for (i in 2:9) {
+  plot(bike.trim[, i], bike.trim[, 1], xlab = cols[i], ylab = "Count")
+  abline(lm(paste("count", "~", cols[i]), data=bike.trim), col = "red")
+}
+```
+
+Season appears to have distinct differences in its distributions of counts, so it likely has some importance in determining rental count. Holiday and workingday do not seem to really differ between the two categories. Weather and time also seems to important in count distribution, with the bulk of the data varying between each category, but the line is not very informative in the exact relation, because they are factor variables. For the numerical variables, atemp seems to have similar distributions, with a slight positive correlation. Humidity seems to have somewhat of a negative correlation. Windspeed is the odd case here. Though from the initial distribution, one would assume that the correlation would be clearly negative. However, this is not so, and perhaps there may be outliers that need to be addressed.
+
+\pagebreak
+Basic fit of all the variables
+```{r}
+bike_fit <- lm(log(count)~., data=bike.trim)
+summary(bike_fit)
+```
+There is not much that can be determined by this basic fit for now. The current R-squared value of this model is 0.7149. Below is the plot of the fitted values against the actual values, and then the residuals
+
+\pagebreak
+```{r, fig.width=10}
+par(mfrow=c(1, 2))
+plot(bike_fit$fitted.values, log(bike.trim$count), xlab="Fitted Values", ylab="Actual log(Counts)")
+plot(bike_fit$fitted.values, bike_fit$residuals, xlab="Fitted Values", ylab="Residuals")
+```
+
+It can be seen that this preliminary regression line is not too accurate. The accuracy appears to be greater for higher count values, but the variance between the two greatly increases as log(count) decreases. The residuals also show some correlation when it would be expected to be a massless cloud of points around 0 had the line fit well. Also, because of the skew of more extreme negative residuals, my current model must be predicting values considerably too low at a much greater rate.
+
+
+\pagebreak
+```{r}
+r.sq.dif <- c()
+base.r.sq <- summary(bike_fit)$r.squared
+for(i in 2:9) {
+  for(i2 in 2:9) {
+    if(i < i2) {
+      f <- paste("log(",cols[1],")", "~ . +", cols[i], ":", cols[i2])
+      fit <- lm(f, data=bike.trim)
+      if(summary(fit)$r.squared > base.r.sq + 0.001) {
+        r.sq.dif = c(r.sq.dif, paste(cols[i], ":", cols[i2]))
+      }
+    }
+  }
+}
+r.sq.dif
+```
+
+Continuing to test the variables using log(count) as the response, I iterated through all possible pairs of the explanatory variables, and compared the multiple r squared values to the baseline from the original log(count) model. As it is likely that all additions of an interaction term will increase the r squared value to some degree, I set the threshold to be at least 0.002 greater than that found in the base model. As a result, 3 pairs are filtered out, which seems like a reasonable number out of the total possible 56 pairs. 
+
+```{r}
+f <- paste("log(",cols[1], ")", "~ . +")
+for(pair in r.sq.dif) {
+  f <- paste(f, pair, "+")
+}
+f <- str_sub(f, end=-3)
+bike.fit.inter <- lm(f, data=bike.trim)
+summary(bike.fit.inter)
+```
+
+Though many additional variables are now included, this model has a higher multiple R-squared value, 0.7817, which is greater by approximately .07, indicating that the accuracy of this model is superior to the base model. 
+
+*A note: I tested several threshold values (0.001, 0.002, 0.003), and resulted in a total of 45, 29, and 26 variables respectively. Though a threshold of 0.002 does, unfortunately, result in a whole 13 extra variables, the jump in r-squared compared to a threshold of 0.003 was large enough to consider including them, nonetheless.
+
+
+
+\pagebreak
+Variable Selection:
+
+```{r}
+step(bike.fit.inter, direction="both")
+```
+
+I used the step() function to reduce the variables in the model. Only the variable holiday was taken out in the result.
+
+The final model is log(count) ~ atemp + time + humidity + weather + atemp:season + time:workingday + time:atemp, a moderately sized model with 7 variables(including the interaction terms).
+
+```{r}
+bike.step.fit <- lm(formula = log(count) ~ season + workingday + weather + atemp + 
+    humidity + windspeed + time + season:atemp + workingday:time + 
+    atemp:time, data = bike.trim)
+summary(bike.step.fit)
+```
+\pagebreak
+```{r, fig.width=10}
+par(mfrow=c(1, 2))
+plot(bike.step.fit$fitted.values, log(bike.trim$count), xlab="Fitted Values", ylab="Actual log(Counts)")
+plot(bike.step.fit$fitted.values, bike.step.fit$residuals, xlab="Fitted Values", ylab="Residuals")
+```
+
+Once again plotting the fitted values against the actual values and the residuals, we can see that there isn't much change in the patterns seen in the fitted versus the actual values. However, the range of negative residuals has decreased and it appears they may be a bit more balanced around 0, which is an improvement over the previous model.
+
+
+\pagebreak
+
+Regression Diagnostics:
+```{r, fig.height=7}
+par(mfrow = c(2, 2))
+plot(bike.step.fit)
+# bike.trim[5632, ]
+```
+
+From the first plot of the residuals against the fitted, it is somewhat obvious that the relation between the variables is not precisely linear for smller values, but is reasonably modeled for larger counts. Rather than a shapeless cloud, the variance of the points around the 0 line seems to decrease as the values increase. This is also seen somewhat in the Q-Q plot, whose points are relatively close to the line except for the left end of the graph, where the normal assumption may not hold. THe scale-location plot, since it is representative of over 10000 values, may not necessarily show a visible pattern among the points. However, there is a slight decrease in the range of points as the value of the fitted numbers increase, and the red overlaid line slopes downward. This is also likely a sign of heteroscedascity. Finally, for the residuals vs leverage plot, not many outliers are flagged in the plot, perhaps due to the density of the data points. However, it can be seen that there is a greater range in the lesser values of the plot relative to the more extreme ones. 
+
+*The one extreme outlier flagged here, entry 5632, is a special case. After observing this outlier separately, and noting the weather category as "4", something I noted earlier, I attempted to remove this point and rerun regression analysis. However, this did not ultimately work out, because in subsequent prediction with my model, I require at least one data point of this factor level to even predict other entries in the test set. Therefore, I kept this outlier in my data.
+
+
+Predict:
+```{r}
+pred = exp(predict(bike.step.fit, bike.test)) # retransformation
+subm = data.frame(datetime = bike.test$datetime, count = pred)
+write.csv(subm, file = "Subm.csv", row.names = FALSE)
+```
+
+Score given by Kaggle: 0.66162
+
+
+Comparison:
+
+My score was still significantly worse than those in the Kaggle public leaderboards. Perhaps ways to increase this score would be to increase the number of interaction terms between the variables, or to not do that initial trimming of variables. Also, perhaps I could take the datetime variable and also create a new variable corresponding to specific months as well as make the corresponding hour time periods different factors for each hour, rather than grouping them together. If I had more time, I would also look for some way to deal with that outlier in the weather group 4 entry, and also remove some other outliers within the data to obtain a clearer relation between the explanatory variables and the count. Finally, I don't believe the relation between the variables is exactly linear, because of the lack of accuracy in the lower end of the scale. I believe it may be similar to an exponential distribution, or quadratic, but these are just hypotheses that require more testing.

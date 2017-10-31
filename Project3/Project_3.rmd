@@ -1,0 +1,241 @@
+---
+title: "Project_3"
+author: "Laney Huang"
+date: "May 5, 2017"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+library(GGally)
+library(ggplot2)
+library(gpairs)
+library(rpart)
+library(rpart.plot)		
+library(logistf)
+library(randomForest)
+```
+
+
+Reading Data:
+```{r Train}
+ti.train <- read.csv("train.csv", header=TRUE)
+ti.train <- ti.train[, -c(1, 4, 9, 11)]
+ti.train$Survived <- factor(ti.train$Survived, levels=c(0, 1)) #0 is no
+ti.train$Pclass <- factor(ti.train$Pclass, levels=c(1, 2,3),
+                            labels = c("upper","middle","lower"))
+ti.train[is.na(ti.train$Age) & ti.train$Sex == "male", "Age"] <-
+  median(ti.train[ti.train$Sex == "male","Age"], na.rm = TRUE)
+ti.train[is.na(ti.train$Age) & ti.train$Sex == "female", "Age"] <-
+  median(ti.train[ti.train$Sex == "female","Age"], na.rm = TRUE)
+# ti.train <- ti.train[which(!is.na(ti.train$Age)), ]
+ti.train <- ti.train[which(ti.train$Embarked != ""), ]
+ti.train <- droplevels(ti.train)
+```
+After reading in the entire data and observing both the dataframe produced and the summary of it, I removed 4 columns. PassengerId and name are simply different for each passenger and just an identification term, not an explanatory variable. Then, I removed the ticket column, which seemed to contain many numbers that are not informative in any way. Finally, after some deliberation, I also removed the Cabin variable, because most of the entries are blank, and will likely have little effect on the prediction of survival. I also dropped the rows in which embarkation was not given, which was a total of 2 entries. For the values under Age which were N/A, I substitued in values for the median age of the particular gender. I did the same below when reading in the test set.
+
+```{r Test}
+ti.test <- read.csv("test.csv", header=TRUE)
+ti.test$Pclass <- factor(ti.test$Pclass, levels=c(1, 2,3),
+                            labels = c("upper","middle","lower"))
+ti.test[is.na(ti.test$Age) & ti.test$Sex == "male", "Age"] <-
+  median(ti.train[ti.train$Sex == "male","Age"], na.rm = TRUE)
+ti.test[is.na(ti.test$Age) & ti.test$Sex == "female", "Age"] <-
+  median(ti.train[ti.train$Sex == "female","Age"], na.rm = TRUE)
+ti.test[which(is.na(ti.test$Fare)), "Fare"] <- median(ti.train$Fare)
+```
+
+\pagebreak
+Basic Summary/Analysis:
+
+```{r}
+summary(ti.train)
+```
+
+
+```{r}
+par(mfrow=c(2, 2))
+cols = colnames(ti.train)
+for(i in 1:8) {
+  if(is.numeric(ti.train[, i])) {
+    hist(ti.train[, i], main = paste("Histogram of", cols[i]), xlab = cols[i], breaks=30)
+  }
+}
+```
+
+Above, I have plotted the histograms for each of the numeric variables. Age seems to have a wide distribution that is spread relatively symmetrically, likely due to how I replaced the N/A values. SibSp and Parch counts are heavily distributioned on the left end, with lower values. Fares are also concentrated towards lower tickets costs, but since the range extends to 500, there may be extreme, outlier values around that tail.
+
+
+```{r,include=FALSE}
+no_fill <- function(data, mapping, ...){
+  ggplot(data = data, mapping=mapping) +
+    geom_density(mapping = aes_string(color="Survived"), fill=NA)
+}
+```
+
+Below is the pairs plot of all the variables, colored separately by the Survived variable. Pink indicates no survival, blue indicates survival. 
+
+```{r, fig.width=10, fig.height=7}
+ggpairs(data= ti.train,
+        aes(color = Survived),
+        columns = c(2:8),
+        lower=list(combo=wrap("facethist", binwidth=5)),
+        diag=list(continuous=no_fill))
+
+```
+
+Since survival is the variable of interest, I will focus mostly on its interaction with each of the other variables. Ratio of survivals does seem to differ between passenger classes and sex, and is much more noticeable in the sex category, with males having a higher percentage of deaths. Age doesn't seem to have as much of an effect on survival, as the distributions for both are similar, though there is a slight discrepancy of low ages and their survival. This likely is from the increased survival of children. Sibsp, Parch, and Fare have no noticeable differences between distributions of survival and nonsurvival. For embarked, it appears that those departing from Southampton have a higher low fraction of surviving passengers, which could possibly just be a side effect of its higher count. 
+
+Other interesting things to note is that embarkation changes very little relatie to the other variables, so dropping it from the regression may be a consideration. The general range of ages has a higher mean in lower passenger classes. Somehow, also surprisingly, Fare ranges have a higher average for lower passenger classes, which is likely contributed to by outlier entries, but higher passenger classes do not show presence of these outliers. Parch and SibSp are also quite correlated.
+
+\pagebreak
+Prediction via Logistic Regression
+```{r}
+ti.fit <- glm(Survived~., data=ti.train, family=binomial)
+summary(ti.fit) #783, 803
+```
+
+First, I performed simple logistic regression on all explanatory variables, and the output of the fit is shown above. However, interaction terms ought to be investigated, and so I refit a model that includes interaction terms between all the variables, which was reasonable in this instance because the number of additional variables is not too high and still computationally viable.
+
+```{r, warning=FALSE}
+ti.inter.fit <- glm(Survived~.*., data=ti.train, family=binomial)
+summary(ti.inter.fit) #672, 760
+```
+
+As can be seen by both the residual deviance and AIC score of the two models, adding interaction terms greatly increased the accuracy of the model, though the number of terms in the new model is still much greater than before. Using the step function, I attempt to find the best model based on AIC criterion by both adding and subtracting variables. 
+
+*Trace of steps is suppressed for convenience
+
+```{r, warning=FALSE}
+step(ti.inter.fit, direction="both", trace = FALSE) 
+```
+
+The final model that is output by the step function seems to be nearly the same as the previous logistic model including interactions. The terms that have been taken out are: Pclass:Age, Pclass:Embarked, Sex:SibSp, Sex:Parch, Sex:Fare, Age:SibSp, Age:Embarked, SibSp:Parch, SibSp:Fare, Parch:Fare.
+
+I've created a new variable to hold this new fit model below. Though this model's residual deviance is greater than the full model's, its AIC is much lower.
+
+```{r, warning=FALSE}
+step.ti.fit <- glm(formula = Survived ~ Pclass + Sex + Age + SibSp + Parch +
+    Fare + Embarked + Pclass:Sex + Pclass:SibSp + Pclass:Parch +
+    Pclass:Fare + Sex:Age + Sex:Embarked + Age:Parch + Age:Fare +
+    SibSp:Embarked + Parch:Embarked + Fare:Embarked, family = binomial,
+    data = ti.train)
+summary(step.ti.fit) #680, 738
+```
+
+Threshold determination to minimize misclassification:
+
+```{r}
+conf <- matrix(0, nrow = 21, ncol = 5)
+colnames(conf) <- c("thr", "a", "b", "c", "d")
+conf[, 1] <- seq(0, 1, by = 0.05)
+y <- as.numeric(ti.train$Survived) - 1
+y.pred <- step.ti.fit$fitted.values
+for (i in 1:21) {
+  a <- sum((!y) & (y.pred <= conf[i, 1]))
+  b <- sum((!y) & (y.pred > conf[i, 1]))
+  c <- sum((y) & (y.pred <= conf[i, 1]))
+  d <- sum((y) & (y.pred > conf[i, 1]))
+  conf[i, 2:5] <- c(a, b, c, d)
+}
+plot(conf[, 1], conf[, 3] + conf[, 4], xlab = "Threshold", ylab = "Misclassified") #0.5
+```
+
+With the model, I have created a confusion matrix for the prediction and actual results, and plotted the errors (predict no, actual yes and predict yes, actual no) over .05 increments in probability. Sicne the plot reaches a minimum at approximately 0.5, I will use that value as the threshold to determine the category assigned to a specific entry based on its predicted probability. 
+
+This function below simply helps convert the probability by determining if it is above or below threshold.
+```{r convert to Survival}
+conv.Surv <- function(x) {
+  if(x >= 0.50) return(1)
+  else return(0)
+}
+```
+
+Using the predict() function with "response" as its type parameter, I return a vector of probabilities based on the logistic regression equation. I then determine the predicted category for each entry using the threshold I obtained above, and then write its output into a csv file. 
+```{r}
+pred <- predict(step.ti.fit, ti.test, type="response")
+pred <- sapply(pred, conv.Surv)
+subm = data.frame(PassengerId = ti.test$PassengerId, Survived = pred)
+write.csv(subm, file = "Subm.csv", row.names = FALSE)
+```
+
+Kaggle Score: 0.76077
+
+Through some simple algebra, it can be seen that the Kaggle Score is calculated by the number of correct predictions of the Survive category. My accuracy score is not that high compared to others on the scoreboard.
+
+
+\pagebreak
+Classification Tree:
+```{r}
+rt = rpart(Survived~., data = ti.train, method="class", cp=0.0001)
+printcp(rt)
+```
+
+Next, I use rpart() to fit the data into a classification tree. I initially set the cp value to be 0.0001, and then output the cp values along with their errors. Since the xerror changes each time the code is run, I loop through finding the min xerror 1000 times and then take the mode of the resulting vector of cp values. 
+Below is the new, pruned tree that uses this optimal cp value.
+
+```{r}
+lowcp <- c()
+for(i in 1:1000) {
+  rtree <- rpart(Survived~., data = ti.train, method="class", cp=0.0001)
+  lowcp <- c(lowcp, rtree$cptable[which.min(rtree$cptable[,"xerror"]),"CP"])
+}
+```
+
+```{r, include=FALSE}
+Mode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+```
+
+```{r}
+rt.prune <- prune(rt, cp = Mode(lowcp))
+prp(rt.prune)
+```
+
+
+This tree that is grown uses the variables Age, Fare, Pclass, Sex, and SibSp. The cp used is 0.0029412, resulting in 14 splits. Using this tree, I once again try to predict the values in the test set. 
+
+```{r}
+tree.pred <- predict(rt.prune, ti.test, type="class")
+tree.pred <- as.numeric(tree.pred) - 1
+subm = data.frame(PassengerId = ti.test$PassengerId, Survived = tree.pred)
+write.csv(subm, file = "Subm.tree.csv", row.names = FALSE)
+```
+
+
+Kaggle Tree Score: 0.76077
+
+There is no change in my Kaggle score compared to before. 
+
+
+\pagebreak
+Prediction via Random Forests: 
+```{r}
+rf <- randomForest(Survived~., data=ti.train, importance = TRUE)
+rf
+```
+Now, random forests are used instead for classification. This method uses bootstrapping techniques to sample trees multiple times from the training set with random variables used each time at the splits. The object created by this function outputs a confusion matrix that gives a rough estimate of how accurate the averaged predictions are. 
+
+Once again, predictions on the test data set are made based on this classification method. 
+```{r}
+forest.pred <- predict(rf, ti.test)
+forest.pred <- as.numeric(forest.pred) - 1
+subm = data.frame(PassengerId = ti.test$PassengerId, Survived = forest.pred)
+write.csv(subm, file = "Subm.forest.csv", row.names = FALSE)
+```
+
+Kaggle Score: 0.77990
+
+This time, it appears that the score has increased slightly. Perhaps this large number of random samples drawn, then averaged, allow for a less biased estimation of the true classification method. 
+
+\pagebreak
+Comparison:
+
+Overall, my scores were quite far from the top scoring entries, many of which seemed to even have perfect prediction. Through the three methods attempted, there was very little difference in the accuracy of my model on the test set. 
+
+Potential issues or improvements could be in how I handle the data originally. As there were many N/A values in the age category, I chose to substitute them with the median to include them all into my training data set for modeling. This could very well alter the accuracy of my data, as other methods of handling the N/A could be to use the mean, or even drop those values all together. Furthermore, since I use the same values to substitute in the test set, it could be an issue where the test set, by chance, actually has a different age distribution that will also decrease the accuracy of my modeling. Investigations into correlated explanatory variables and overlapping effects may also help. 
+
+
+
